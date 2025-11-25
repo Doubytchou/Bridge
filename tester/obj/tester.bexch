@@ -1,0 +1,19 @@
+[GENERATED OBJECT FILE]
+b__tester.o
+[PROJECT FILES]
+C:\Users\MCO\PycharmProjects\bridge\tester\tstr.gpr
+20251125194432 2a80702f164a6f994b4d07fe1bc5ca6a
+[BOUND OBJECT FILES]
+C:\Users\MCO\PycharmProjects\bridge\tester\obj\tester.o
+[GENERATED SOURCE FILES]
+b__tester.ads
+b__tester.adb
+b__tester.ali
+[RESULTING OPTIONS]
+-LC:\Users\MCO\PycharmProjects\bridge\tester\obj\
+-LC:\Users\MCO\PycharmProjects\bridge\tester\obj\
+-LC:/gnat/2021/lib/gcc/x86_64-w64-mingw32/10.3.1/adalib/
+-static
+-static-libgcc
+C:/gnat/2021/lib/gcc/x86_64-w64-mingw32/10.3.1/adalib/libgnat.a
+-Wl,--stack=0x2000000
