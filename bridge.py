@@ -5,44 +5,45 @@ import sys
 import time
 import os
 import signal
-import select
+import ctypes
+import msvcrt
 
-def readline_timeout(pipe, timeout=0.1):
-    """
-    Lit une ligne depuis pipe avec timeout.
-    Si pas de '\n' reçu pendant le timeout, retourne ce qui est disponible.
-    """
-    line = b""
-    fileno = pipe.fileno()
-    start = time.time()
+# Importer les chemins des binaires depuis le fichier séparé
+from bridge_paths import SERVER_BINARY, TESTER_BINARY
 
-    while True:
-        # select pour vérifier si des données sont disponibles
-        ready, _, _ = select.select([pipe], [], [], timeout)
-        if ready:
-            c = os.read(fileno, 1)
-            if not c:
-                break
-            line += c
-            if c == b"\n":
-                break
-        else:
-            # timeout atteint → on prend ce qu'on a
-            break
-        if time.time() - start > timeout:
-            break
-    return line
+# ------------------------------
+# Fonctions Windows spécifiques
+# ------------------------------
+kernel32 = ctypes.windll.kernel32
 
+def peek_pipe(pipe):
+    """Retourne le nombre d'octets disponibles à lire dans le pipe."""
+    handle = msvcrt.get_osfhandle(pipe.fileno())
+    avail = ctypes.c_ulong(0)
+    res = kernel32.PeekNamedPipe(handle, None, 0, None, ctypes.byref(avail), None)
+    if res == 0:
+        return 0
+    return avail.value
+
+def read_available(pipe):
+    """Lit tout ce qui est disponible dans le pipe."""
+    n = peek_pipe(pipe)
+    if n > 0:
+        return os.read(pipe.fileno(), n)
+    return b""
+
+# ------------------------------
+# Forward
+# ------------------------------
 def forward(src, dst, name, verbose=False, stop_event=None):
     """
-    Exchange src => dst.
-    If verbose=True, show data in console.
-    stop_event used to thread ending.
+    Forward tout ce qui est disponible de src vers dst.
     """
     try:
         while not (stop_event and stop_event.is_set()):
-            data = readline_timeout(src, timeout=0.1)
+            data = read_available(src)
             if not data:
+                time.sleep(0.01)
                 continue
             if verbose:
                 print(f"[{name}] {data.decode(errors='replace').rstrip()}")
@@ -53,28 +54,24 @@ def forward(src, dst, name, verbose=False, stop_event=None):
                 break
     except Exception:
         pass
-    finally:
-        try:
-            dst.flush()
-        except Exception:
-            pass
 
+# ------------------------------
+# Stop process
+# ------------------------------
 def stop_process(p):
     """Stop process with pipes closing"""
     if p is None:
         return
 
     if p.poll() is not None:
-        return  # déjà terminé
+        return
 
-    # fermer stdin
     try:
         if p.stdin:
             p.stdin.close()
     except Exception:
         pass
 
-    # envoyer signal propre
     try:
         os.kill(p.pid, signal.CTRL_BREAK_EVENT)
     except Exception:
@@ -83,7 +80,6 @@ def stop_process(p):
         except Exception:
             pass
 
-    # attendre fin
     try:
         p.wait(timeout=2)
     except Exception:
@@ -92,7 +88,6 @@ def stop_process(p):
         except Exception:
             pass
 
-    # fermer stdout et stderr
     try:
         if p.stdout:
             p.stdout.close()
@@ -104,6 +99,9 @@ def stop_process(p):
     except Exception:
         pass
 
+# ------------------------------
+# Main
+# ------------------------------
 def main():
     parser = argparse.ArgumentParser(description="Bridge server <-> tester")
     parser.add_argument("filepath", help="Project Path")
@@ -114,8 +112,8 @@ def main():
 
     args = parser.parse_args()
 
-    server_cmd = ["server/obj/server.exe", args.filepath]
-    tester_cmd = ["tester/obj/tester.exe", args.filepath]
+    server_cmd = [SERVER_BINARY, args.filepath]
+    tester_cmd = [TESTER_BINARY, args.filepath]
 
     if args.application_id:
         server_cmd += ["--application-id", args.application_id]
@@ -148,7 +146,7 @@ def main():
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
         )
 
-        # Threads forward avec stop_event pour terminer proprement
+        # Threads forward
         threads = [
             threading.Thread(target=forward, args=(server.stdout, tester.stdin, "Srv->Tst", args.verbose, stop_event), daemon=True),
             threading.Thread(target=forward, args=(tester.stdout, server.stdin, "Tst->Srv", args.verbose, stop_event), daemon=True),
@@ -158,16 +156,16 @@ def main():
         for t in threads:
             t.start()
 
-        # Boucle non bloquante pour Ctrl+C
+        # Boucle principale non bloquante
         while True:
             if server.poll() is not None and tester.poll() is not None:
                 break
-            time.sleep(0.1)
+            time.sleep(0.05)
 
     except KeyboardInterrupt:
         print("\n[CTRL+C] Stop Requested by user")
     finally:
-        stop_event.set()  # signaler aux threads de s'arrêter
+        stop_event.set()
         print("Processes Cleanup...")
         stop_process(server)
         stop_process(tester)
