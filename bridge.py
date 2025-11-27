@@ -5,18 +5,45 @@ import sys
 import time
 import os
 import signal
+import select
+
+def readline_timeout(pipe, timeout=0.1):
+    """
+    Lit une ligne depuis pipe avec timeout.
+    Si pas de '\n' reçu pendant le timeout, retourne ce qui est disponible.
+    """
+    line = b""
+    fileno = pipe.fileno()
+    start = time.time()
+
+    while True:
+        # select pour vérifier si des données sont disponibles
+        ready, _, _ = select.select([pipe], [], [], timeout)
+        if ready:
+            c = os.read(fileno, 1)
+            if not c:
+                break
+            line += c
+            if c == b"\n":
+                break
+        else:
+            # timeout atteint → on prend ce qu'on a
+            break
+        if time.time() - start > timeout:
+            break
+    return line
 
 def forward(src, dst, name, verbose=False, stop_event=None):
     """
-    exchange src => dst.
-    if verbose=True, show data in console.
+    Exchange src => dst.
+    If verbose=True, show data in console.
     stop_event used to thread ending.
     """
     try:
         while not (stop_event and stop_event.is_set()):
-            data = src.readline()
+            data = readline_timeout(src, timeout=0.1)
             if not data:
-                break
+                continue
             if verbose:
                 print(f"[{name}] {data.decode(errors='replace').rstrip()}")
             try:
@@ -80,7 +107,7 @@ def stop_process(p):
 def main():
     parser = argparse.ArgumentParser(description="Bridge server <-> tester")
     parser.add_argument("filepath", help="Project Path")
-    parser.add_argument("--UUID", help="Project UUID")
+    parser.add_argument("--application-id", help="Application ID sent only to server")
     parser.add_argument("--debug", action="store_true", help="Only for tester")
     parser.add_argument("--extra", nargs=argparse.REMAINDER, help="others sent to both")
     parser.add_argument("-V", "--verbose", action="store_true", help="Show all stdin stdout exchanges")
@@ -90,8 +117,8 @@ def main():
     server_cmd = ["server/obj/server.exe", args.filepath]
     tester_cmd = ["tester/obj/tester.exe", args.filepath]
 
-    if args.UUID:
-        server_cmd += ["--UUID", args.UUID]
+    if args.application_id:
+        server_cmd += ["--application-id", args.application_id]
     if args.debug:
         tester_cmd.append("--debug")
     if args.extra:
